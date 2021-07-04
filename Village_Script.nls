@@ -1,0 +1,41 @@
+breed [houses house]
+
+;;GLOBAL VARIABLES;;
+globals [
+  village-wood
+  village-berries
+  village-meat
+  empty-capacity
+]
+
+;;TURTLE VARIABLES;;
+turtles-own[
+ occupants
+  house-meat
+  house-berries
+]
+
+to setup-village
+  set village-wood initial-village-wood
+end
+
+to calculate-food
+  set village-meat 0
+  set village-berries 0
+  ask houses [
+    if house-meat > max-meat-per-house [ set house-meat max-meat-per-house ]
+    if house-berries > max-berries-per-house [ set house-berries max-berries-per-house ]
+    set village-meat village-meat + house-meat
+    set village-berries village-berries + house-berries
+  ]
+end
+
+to build-house
+  
+  if (village-wood >= wood-required-for-house) and (count houses * (house-capacity * 0.6) < count villagers) [
+
+    set village-wood village-wood - wood-required-for-house
+    hatch 1 [ house-position ]
+
+  ]
+end

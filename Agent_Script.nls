@@ -1,0 +1,451 @@
+breed[villagers villager]
+globals
+[
+  n
+  average-berry-weight
+  average-wood-weight
+  average-hunt-weight
+  average-desired-berries
+  average-desired-animals
+  average-desired-trees
+]
+;;TURTLE VARIABLES;;
+turtles-own[
+  age ; villagers must be old enough to reproduce
+  energy ; villagers need energy to survive, all actions use a varying amount of energy and villagers must eat to increase it
+  tiredness ; tired villagers will try to return home to recover
+  
+  ; the base weight for each task, this is based on the villagers parents values
+  base-berries-weight
+  base-wood-weight
+  base-hunt-weight
+  
+  ; these values affect how likely a villager is to perform a task, they change dynamically based on the environment
+  berries-weight
+  wood-weight
+  hunt-weight
+  rest-weight
+  
+  ; the amount of each resource a villager expects there to be in the world
+  desired-berries
+  desired-animals
+  desired-trees
+  
+  my-house ; the villagers house, if it is homeless this is set to 'nobody'
+]
+
+; set up the villager
+to setup-agents
+  set-default-shape turtles "person"
+  create-villagers population
+  [ 
+    set-agent-stats
+    if energy < 25 [set energy energy + 60]
+    setxy random-xcor random-ycor
+    set color pink
+  ]
+  
+end
+
+; gather berries
+to gather-berries
+  set color red
+  set energy energy - 0.5
+  set tiredness tiredness + 0.05
+  if any? berries in-radius 1
+  [
+    ask one-of berries in-radius 1 [die]
+    let my-berries 0
+    if my-house != nobody
+    [ ask my-house [ set my-berries house-berries ] ]
+    ifelse energy < 25 or my-berries >= max-berries-per-house or my-house = nobody ; only eat the food if hungry, else give to village
+    [ set energy energy + base-berry-energy + random-float bonus-berry-energy ] 
+    [ ask my-house [ set house-berries house-berries + 1 ] ]
+  ]
+end
+
+; hunt animals
+to hunt
+  set color orange
+  set energy energy - 1.5
+  set tiredness tiredness + 0.25
+  if any? animals in-radius 1
+  [
+    if random-float 100 < hunting-risk [set energy energy - 25]
+    ask one-of animals in-radius 1 [die]
+    let my-meat 0
+    if my-house != nobody
+    [ ask my-house [ set my-meat house-meat ] ]
+    ifelse energy < 25 or my-meat >= max-meat-per-house or my-house = nobody ; only eat the food if hungry, else give to village
+    [ set energy energy + base-meat-energy + random-float bonus-meat-energy ] 
+    [ ask my-house [ set house-meat house-meat + 1 ] ]
+  ]
+end
+
+; gather wood
+to gather-wood
+  set energy energy - 0.5
+  set tiredness tiredness + 0.1
+  set color brown
+  if any? trees in-radius 1
+  [
+    ask one-of trees in-radius 1 [die]
+    set village-wood village-wood + 2
+    set energy energy - 2
+  ]
+end
+
+; rest method
+to rest
+  set color pink
+  let house-x 0
+  let house-y 0
+  set energy energy - 0.2
+  
+  ; recover tiredness until it hits 0
+  while [tiredness > 0]
+  [
+    ; homeless villagers will still recover tiredness but will lose energy doing so
+    if my-house != nobody
+    [
+      face my-house
+      fd 0.5
+      set energy energy + 0.5
+    ]
+    set tiredness tiredness - 0.5
+  ]
+  
+  ; clamp tiredness value
+  if tiredness < 0 [ set tiredness 0 ]
+end
+
+; villager wandering method
+to wander
+  fd 1
+  rt random 80
+  lt random 80
+end
+
+to wander-sheep
+  fd 0.5
+  rt random 40
+  lt random 40
+  set energy energy - 0.1
+  if energy > 100
+  [
+    set energy 100
+  ]
+  if energy < 0
+  [
+    die
+  ]
+end
+
+to choose-action 
+  
+  ; totals used for calculating averages to view in the interface
+  let total-berry-weight 0
+  let total-wood-weight 0
+  let total-hunt-weight 0
+  let total-desired-berries 0
+  let total-desired-animals 0
+  let total-desired-trees 0
+  
+  ; ask all villagers to...
+  ask villagers[
+    
+    ; show energy label
+    ifelse show-energy = true
+    [
+      set label round energy
+    ]
+    [
+      set label ""
+    ]
+    
+    ; clamp tiredness at suitable values
+    if energy > 200
+    [
+      set energy 200
+    ]
+    if tiredness > 100
+    [
+      set tiredness 100
+    ]
+    
+    ; if the villager is homeless, look for a house
+    if my-house = nobody
+    [
+      let possible-house nobody
+      ask one-of houses
+      [
+        if count links < house-capacity
+        [
+          create-link-with myself
+          set possible-house self
+        ]
+      ]
+      set my-house possible-house
+    ]
+    
+    ; each tick the village will wander and make a decision on what task they will do/continue doing
+    wander
+    calculate-weights
+    
+    let random-number random-float (berries-weight + wood-weight + hunt-weight + rest-weight)
+    
+    (ifelse
+      ; if berry gathering selected
+      random-number < berries-weight
+      [
+        gather-berries
+      ]
+      ; if wood gathering selected
+      random-number < wood-weight + berries-weight
+      [
+        gather-wood
+      ]
+      ; if hunt selected
+      random-number < hunt-weight + wood-weight + berries-weight
+      [
+        hunt
+      ]
+      ; if resting selected, still uses a small amount of energy
+      [
+        rest
+      ]
+    )
+    
+    ; if out of energy, try and eat from the house food supply, or else die
+    if energy <= 0
+    [
+      let my-berries 0
+      let my-meat 0
+      if my-house = nobody [ die ] ; if a villager is homeless, they will die if they run out of energy
+      ask my-house [
+        set my-berries house-berries
+        set my-meat house-meat
+      ]
+      (ifelse
+        my-meat > 0
+        [
+          ; eat meat from the houses meat supply
+          set energy energy + base-meat-energy + random bonus-meat-energy
+          ask my-house [ set house-meat house-meat - 1 ]
+        ]
+        my-berries > 0
+        [
+          ; eat berries from the houses berry supply
+          set energy energy + base-berry-energy + random bonus-berry-energy
+          ask my-house [ set house-berries house-berries - 1 ]
+        ]
+        [
+          die ; if the house food supply is empty, the villager will die
+        ]
+      )
+    ]
+    
+    ; add up the total weights
+    set total-berry-weight total-berry-weight + base-berries-weight
+    set total-wood-weight total-wood-weight + base-wood-weight
+    set total-hunt-weight total-hunt-weight + base-hunt-weight
+    set total-desired-berries total-desired-berries + desired-berries
+    set total-desired-animals total-desired-animals + desired-animals
+    set total-desired-trees total-desired-trees + desired-trees
+    
+    ; increment the villagers age
+    set age age + 1
+  ]
+  
+  ; only calculate averages if there are still villagers left, otherwise a runtime error will occur due to division by 0
+  if count villagers > 1
+  [
+    set average-berry-weight total-berry-weight / count villagers
+    set average-wood-weight total-wood-weight / count villagers
+    set average-hunt-weight total-hunt-weight / count villagers
+    set average-desired-berries total-desired-berries / count villagers
+    set average-desired-animals total-desired-animals / count villagers
+    set average-desired-trees total-desired-trees / count villagers
+  ]
+end
+
+; calculate the current weights to be used
+to calculate-weights
+  
+  ; start the weights at their base value, if the weight of an action is not affected it will default to this
+  set berries-weight base-berries-weight
+  set wood-weight base-wood-weight
+  set hunt-weight base-hunt-weight
+  
+  ; determine the amount of food in the villagers house, if the villager is homeless set this to the max to ensure they dont try to get food for their non-existant house
+  let my-berries max-berries-per-house
+  let my-meat max-meat-per-house
+  if my-house != nobody
+  [
+    ask my-house [
+      set my-berries house-berries
+      set my-meat house-meat
+    ]
+  ]
+  
+  ; if there is a shortage of food in the house or the villager is hungry...
+  ifelse my-berries < max-berries-per-house * 0.6 or my-meat < max-meat-per-house * 0.6 or energy < 50
+  [
+    ; check if villager is hungry, if it is there should be no particular emphasis on gathering wood
+    if (energy < 50)
+    [
+      set wood-weight 0.1
+    ]
+    ; if there is a surplus of berries, focus on gathering them
+    ifelse count berries > desired-berries + 5
+    [
+      set berries-weight 1
+    ]
+    [
+      ; else, if there is a shortage of berries, stop gathering them
+      if count berries < desired-berries - 5
+      [
+        set berries-weight 0
+      ]
+    ]
+    ; if there is a surplus of animals, hunt them
+    ifelse count animals > desired-animals + 5
+    [
+      set hunt-weight 1
+    ]
+    [
+      ; otheriwse, if there is a shortage of animals stop hunting them
+      if count animals < desired-animals - 5
+      [
+        set hunt-weight 0
+      ]
+    ]
+  ]
+  [
+    ; if there is no need for food, stop getting it
+    set berries-weight 0
+    set hunt-weight 0
+    
+    ; instead if there is a surplus of trees, chop them down for wood
+    if count trees > desired-trees + 5
+    [
+      set wood-weight 1
+    ]
+  ]
+  ; if there is a shortage of trees or there is enough houses for the current population of villagers stop getting wood
+  if count trees < desired-trees - 5 or (count houses * (house-capacity) >= count villagers)
+  [
+    set wood-weight 0
+  ]
+  ; if berries are not extinct and there is a shortage while there is an abundance of animals, maximise hunt weight
+  if count berries != 0 and count berries < desired-berries - 5 and count animals > desired-animals + 5
+  [
+    set hunt-weight 1
+  ]
+  ; if the villager is tired, rest
+  if tiredness > 80
+  [
+    set rest-weight 1
+  ]
+end
+
+
+; attempt to reproduce
+to villager-reproduce
+
+  ; calculate the amount of space in this villagers house
+  let house-space 0
+  if my-house != nobody [ ask my-house [ set house-space house-capacity - count links ] ]
+  
+  ; a villager must have enought energy, have a house and be old enough to have a chance of reproducing
+  if energy > 80 and random-float 100 < villager-reproduction-rate and my-house != nobody and age > reproductive-age
+  [
+    set energy energy - 40 ; reproducing uses a lot of energy
+    
+    ; randomise the newborns values slightly
+    let newborn-berries-weight base-berries-weight - 0.025 + random-float 0.05
+    let newborn-wood-weight base-wood-weight - 0.025 + random-float 0.05
+    let newborn-hunt-weight base-hunt-weight - 0.025 + random-float 0.05
+    
+    let newborn-desired-berries desired-berries - 0.5 + random-float 1
+    let newborn-desired-animals desired-animals - 0.5 + random-float 1
+    let newborn-desired-trees desired-trees - 0.5 + random-float 1
+    
+    ; clamp the values within a suitable range
+    if newborn-berries-weight > 0.8 [set newborn-berries-weight 0.8]
+    if newborn-wood-weight > 0.8 [set newborn-wood-weight 0.8]
+    if newborn-hunt-weight > 0.8 [set newborn-hunt-weight 0.8]
+    if newborn-berries-weight < 0.2 [set newborn-berries-weight 0.2]
+    if newborn-wood-weight < 0.2 [set newborn-wood-weight 0.2]
+    if newborn-hunt-weight < 0.2 [set newborn-hunt-weight 0.2]
+    
+    if newborn-desired-berries < 5 [set newborn-desired-berries 5]
+    if newborn-desired-animals < 5 [set newborn-desired-animals 5]
+    if newborn-desired-trees < 5 [set newborn-desired-trees 5]
+    
+    let newborn-house 0
+    if house-space > 0 [
+      set newborn-house my-house
+    ]    
+    
+    hatch 1
+    [
+      rt random-float 360 fd 1
+      set age 0
+      set energy 100
+      
+      ; use slightly modified values if evolution is on, otherwise just use the user-defined values
+      ifelse evolve-naturally = true
+      [
+        set base-berries-weight newborn-berries-weight
+        set base-wood-weight newborn-wood-weight
+        set base-hunt-weight newborn-hunt-weight
+        set desired-berries newborn-desired-berries
+        set desired-animals newborn-desired-animals
+        set desired-trees newborn-desired-trees
+      ]
+      [
+        set base-berries-weight initial-berries-weight
+        set base-wood-weight initial-wood-weight
+        set base-hunt-weight initial-hunt-weight
+        set desired-berries initial-desired-berries
+        set desired-animals initial-desired-animals
+        set desired-trees initial-desired-trees
+      ]
+      
+      ; set the newborns house to the parents if there is room
+      ifelse my-house != nobody and house-space > 0 [
+        set my-house newborn-house
+      ]
+      [
+        set my-house nobody
+      ]
+      
+      ; create the link between the house and the newborn
+      let child self
+      ask myself [
+        if house-space > 0 [
+          ask my-house [ create-link-with child ]
+        ]
+      ]
+    ]
+  ]
+
+end
+
+; set initial villagers stats, newborn villagers do not call this
+to set-agent-stats
+  set age 0
+  set size 1
+  set energy 100
+  set tiredness 0
+  set base-berries-weight initial-berries-weight
+  set base-wood-weight initial-wood-weight
+  set base-hunt-weight initial-hunt-weight
+  set desired-berries initial-desired-berries
+  set desired-animals initial-desired-animals
+  set desired-trees initial-desired-trees
+  set rest-weight 0
+  set my-house nobody
+end
+
